@@ -2,12 +2,16 @@ import sys
 
 from copy import deepcopy
 
+import numpy
 import matplotlib.pyplot as plt
 
 import io_test
 
 key_pos = {'blocksize': 0, 'direct_io': 1, 'action': 2, 'concurence': 3}
 actions = ['randwrite', 'randread', 'read', 'write']
+types = ['s', 'd']
+colors = ['red', 'green', 'blue', 'cyan',
+          'magenta', 'black', 'yellow', 'burlywood']
 
 def get_key(x, no):
     """ x = (), no = key_pos key """
@@ -16,11 +20,12 @@ def get_key(x, no):
     key = [x[n] for n in keys.values()]
     return tuple(key), x[key_pos[no]]
 
+
 def generate_groups(data, group_id):
     """ select data for plot by group_id
         data - processed_series"""
     grouped = {}
-    
+
     for key, val in data.items():
         new_key, group_val = get_key(key, group_id)
         group = grouped.setdefault(new_key, {})
@@ -28,20 +33,41 @@ def generate_groups(data, group_id):
 
     return grouped
 
-def save_plot(key, val):
-    """ one plot from one dict item with value list"""
+
+def gen_dots(val):
+    """Generate dots from real data
+       val = dict (x:y)
+       return ox, oy lists """
     oy = []
     ox = []
-    for y in sorted(val.keys()):
-        oy.append(y)
-        ox.append(val[y][0])
+    for x in sorted(val.keys()):
+        ox.append(x)
+        if val[x][0] != 0:
+            oy.append(1.0/val[x][0])
+        else:
+            oy.append(0)
+    return ox, oy
+
+
+def gen_app_plot(key, val, plot, color):
+    """ Plots with fake line and real dots around"""
+    ox, oy = gen_dots(val)
+    name = "_".join(str(k) for k in key)
+    # create approximation
+    x = numpy.array(ox)
+    y = numpy.array(oy)
+    A = numpy.vstack([x, numpy.ones(len(x))]).T
+    m, c = numpy.linalg.lstsq(A, y)[0]
+    plot.plot(x, y, '^', label=name, markersize=7, color=color)
+    plot.plot(x, m*x + c, color=color)
+
+
+def save_plot(key, val):
+    """ one plot from one dict item with value list"""
+    ox, oy = gen_dots(val)
     name = "_".join(str(k) for k in key)
     plt.plot(ox, oy, label=name)
-    #plt.legend ((pl), (name))
-    #plt.savefig(name+'.png', format='png', dpi=100)
-    #print oy, ">>", ox
-    #plt.show()
-    #plt.clf()
+
 
 def plot_generation(fname, group_by):
     """ plots for value group_by in imgs by actions"""
@@ -54,18 +80,38 @@ def plot_generation(fname, group_by):
 
     pr_data = generate_groups(item.processed_series, group_by)
 
+    #fig = plt.figure()
+    plot = plt.subplot(111)
+
     for action in actions:
-        for key, val in pr_data.items():
-            if action in key:
-                save_plot(key, val)
-        plt.legend()
-        plt.title("Plot for %s on %s" % (group_by, action))
-        plt.xlabel("IOPS")
-        plt.ylabel(group_by)
-        plt.axis([0.0, 5000.0, 0.0, 64.0])
-        name = "%s__%s.png" % (group_by, action)
-        plt.savefig(name, format='png', dpi=100)
-        plt.clf()
+        for tp in types:
+            color = 0
+            for key, val in pr_data.items():
+                if action in key and tp in key:
+                    gen_app_plot(key, val, plot, colors[color])
+                    color += 1
+                    # use it for just connect dots
+                    #save_plot(key, val)
+            # Shrink current axis by 10%
+            box = plot.get_position()
+            plot.set_position([box.x0, box.y0 + box.height * 0.1,
+                 box.width, box.height * 0.9])
+
+            # Put a legend to the bottom
+            plot.legend(loc='upper center', bbox_to_anchor=(0.5, -0.05),
+                        fancybox=True, shadow=True, ncol=4,
+                        fontsize='xx-small')
+            plt.title("Plot for %s on %s" % (group_by, action))
+            plt.ylabel("time")
+            plt.xlabel(group_by)
+            plt.grid()
+            # use it if want scale plot somehow
+            # plt.axis([0.0, 5000.0, 0.0, 64.0])
+            name = "%s__%s_%s.png" % (group_by, action, tp)
+            plt.savefig(name, format='png', dpi=100)
+            plt.clf()
+            plot = plt.subplot(111)
+            color = 0
 
 
 def deviation_on_deviation(groups_list, data):
@@ -86,6 +132,7 @@ def deviation_on_deviation(groups_list, data):
 
 
 def deviation_generation(fname, groups_list):
+    """ Print deviation by groups for data from fname """
     CONC_POS = key_pos['concurence']
     int_list = [int(i) for i in groups_list]
     data = list(io_test.load_io_py_file(fname))
@@ -93,6 +140,7 @@ def deviation_generation(fname, groups_list):
     for key, vals in io_test.groupby_globally(data, io_test.key_func).items():
         item.series[key] = [val['iops'] * key[CONC_POS] for val in vals]
         print deviation_on_deviation(int_list, item.series[key])
+
 
 def main(argv):
     if argv[1] == "plot":
